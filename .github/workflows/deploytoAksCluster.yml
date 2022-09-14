@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: containerregistry00.azurecr.io
+        username: ${{ secrets.acr_containerregistry00_username }}
+        password: ${{ secrets.acr_containerregistry00_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/MenuItemsListingAPI" -f  "MenuItemsListingAPI/Dockerfile" -t containerregistry00.azurecr.io/kubernetescluster:${{ github.sha }} --label dockerfile-path=MenuItemsListingAPI/Dockerfile
+        docker push containerregistry00.azurecr.io/kubernetescluster:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_kubernetescluster_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep kubernetesclusteradf2 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace kubernetesclusteradf2`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: kubernetesclusteradf2
+        container-registry-url: containerregistry00.azurecr.io
+        container-registry-username: ${{ secrets.acr_containerregistry00_username }}
+        container-registry-password: ${{ secrets.acr_containerregistry00_password }}
+        secret-name: kubernetescldockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: kubernetesclusteradf2
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          containerregistry00.azurecr.io/kubernetescluster:${{ github.sha }}
+        imagepullsecrets: |
+          kubernetescldockerauth
